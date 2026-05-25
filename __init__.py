@@ -1,5 +1,11 @@
 import torch
-import nvvfx
+
+try:
+    import nvvfx
+    NVVFX_AVAILABLE = True
+except ImportError:
+    NVVFX_AVAILABLE = False
+    print("[RTXVideoSuperResolution] nvidia-vfx not available — node disabled")
 
 
 class RTXVideoSuperResolution:
@@ -75,10 +81,13 @@ class RTXVideoSuperResolution:
         return (out_tensor,)
 
 
-NODE_CLASS_MAPPINGS = {
-    "RTXVideoSuperResolution": RTXVideoSuperResolution,
-}
-
-NODE_DISPLAY_NAME_MAPPINGS = {
-    "RTXVideoSuperResolution": "RTX Video Super Resolution",
-}
+if NVVFX_AVAILABLE:
+    NODE_CLASS_MAPPINGS = {
+        "RTXVideoSuperResolution": RTXVideoSuperResolution,
+    }
+    NODE_DISPLAY_NAME_MAPPINGS = {
+        "RTXVideoSuperResolution": "RTX Video Super Resolution",
+    }
+else:
+    NODE_CLASS_MAPPINGS = {}
+    NODE_DISPLAY_NAME_MAPPINGS = {}
