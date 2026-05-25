@@ -1,73 +1,51 @@
 import torch
 import nvvfx
-from enum import Enum
-from typing import TypedDict
-from typing_extensions import override
-
-from comfy_api.latest import ComfyExtension, io
 
 
-class UpscaleType(str, Enum):
-    SCALE_BY = "scale by multiplier"
-    TARGET_DIMENSIONS = "target dimensions"
+class RTXVideoSuperResolution:
+    """NVIDIA RTX Video Super Resolution using nvvfx SDK.
 
-
-class RTXVideoSuperResolution(io.ComfyNode):
-    class UpscaleTypedDict(TypedDict):
-        resize_type: UpscaleType
-        scale: float
-        width: int
-        height: int
+    Legacy ComfyUI node format for compatibility with v0.17.x.
+    """
 
     @classmethod
-    def define_schema(cls):
-        return io.Schema(
-            node_id="RTXVideoSuperResolution",
-            display_name="RTX Video Super Resolution",
-            category="image/upscaling",
-            search_aliases=["rtx", "nvidia", "upscale", "super resolution", "vsr"],
-            inputs=[
-                io.Image.Input("images"),
-                io.DynamicCombo.Input(
-                    "resize_type",
-                    tooltip="Choose to scale by a multiplier or to exact target dimensions.",
-                    options=[
-                        io.DynamicCombo.Option(UpscaleType.SCALE_BY, [
-                            io.Float.Input("scale", default=2.0, min=1.0, max=4.0, step=0.01, tooltip="Scale factor (e.g., 2.0 doubles the size)."),
-                        ]),
-                        io.DynamicCombo.Option(UpscaleType.TARGET_DIMENSIONS, [
-                            io.Int.Input("width", default=1920, min=64, max=8192, step=8, tooltip="Target width in pixels."),
-                            io.Int.Input("height", default=1080, min=64, max=8192, step=8, tooltip="Target height in pixels.")
-                        ])
-                    ],
-                ),
-                io.Combo.Input("quality", options=["LOW", "MEDIUM", "HIGH", "ULTRA"], default="ULTRA"),
-            ],
-            outputs=[
-                io.Image.Output("upscaled_images"),
-            ],
-        )
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "images": ("IMAGE",),
+                "resize_type": (["scale by multiplier", "target dimensions"],),
+            },
+            "optional": {
+                "resize_type.scale": ("FLOAT", {"default": 2.0, "min": 1.0, "max": 4.0, "step": 0.01}),
+                "width": ("INT", {"default": 1920, "min": 64, "max": 8192, "step": 8}),
+                "height": ("INT", {"default": 1080, "min": 64, "max": 8192, "step": 8}),
+                "quality": (["LOW", "MEDIUM", "HIGH", "ULTRA"], {"default": "HIGH"}),
+            }
+        }
 
-    @classmethod
-    def execute(cls, images: torch.Tensor, resize_type: UpscaleTypedDict, quality: str) -> io.NodeOutput:
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("upscaled_images",)
+    FUNCTION = "execute"
+    CATEGORY = "image/upscaling"
+
+    def execute(self, images, resize_type, quality="HIGH", **kwargs):
+        scale = kwargs.get("resize_type.scale", 2.0)
+        width = kwargs.get("width", 1920)
+        height = kwargs.get("height", 1080)
+
         b, h, w, c = images.shape
 
-        selected_type = resize_type["resize_type"]
-        if selected_type == UpscaleType.SCALE_BY:
-            scale = resize_type["scale"]
+        if resize_type == "scale by multiplier":
             output_width = int(w * scale)
             output_height = int(h * scale)
-        elif selected_type == UpscaleType.TARGET_DIMENSIONS:
-            output_width = resize_type["width"]
-            output_height = resize_type["height"]
         else:
-            raise ValueError(f"Unsupported resize type: {selected_type}")
+            output_width = width
+            output_height = height
 
         output_width = max(8, round(output_width / 8) * 8)
         output_height = max(8, round(output_height / 8) * 8)
 
         MAX_PIXELS = 1024 * 1024 * 16
-
         out_pixels = output_width * output_height
         batch_size = max(1, MAX_PIXELS // out_pixels)
 
@@ -87,7 +65,6 @@ class RTXVideoSuperResolution(io.ComfyNode):
             out_tensor = torch.empty((images.shape[0], output_height, output_width, c), device=images.device, dtype=images.dtype)
             for i in range(0, images.shape[0], batch_size):
                 batch = images[i:i + batch_size]
-
                 batch_cuda = batch.cuda().permute(0, 3, 1, 2).float().contiguous()
 
                 for j in range(batch_cuda.shape[0]):
@@ -95,20 +72,13 @@ class RTXVideoSuperResolution(io.ComfyNode):
                     dlpack_out = sr.run(input_frame).image
                     out_tensor[i + j: i + j + 1] = torch.from_dlpack(dlpack_out).movedim(0, -1).unsqueeze(0)
 
-        return io.NodeOutput(out_tensor)
+        return (out_tensor,)
 
 
-class NVVFXVideoExtension(ComfyExtension):
-    @override
-    async def get_node_list(self) -> list[type[io.ComfyNode]]:
-        return [
-            RTXVideoSuperResolution,
-        ]
+NODE_CLASS_MAPPINGS = {
+    "RTXVideoSuperResolution": RTXVideoSuperResolution,
+}
 
-
-async def comfy_entrypoint() -> NVVFXVideoExtension:
-    return NVVFXVideoExtension()
-
-# hack so registry picks up the node name
-if False:
-    NODE_CLASS_MAPPINGS = {"RTXVideoSuperResolution": RTXVideoSuperResolution}
+NODE_DISPLAY_NAME_MAPPINGS = {
+    "RTXVideoSuperResolution": "RTX Video Super Resolution",
+}
